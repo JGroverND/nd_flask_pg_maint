@@ -1,0 +1,32 @@
+{% extends "bootstrap/base.html" %}
+{% import "bootstrap/wtf.html" as wtf %}
+
+{% block title %}
+DB Create
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <form method="POST" action="/dbcreate">
+        <h2>Welcome to the PostgreSQL DbCreate Utility</h2>
+            {{ form.hidden_tag() }}
+            {{ wtf.form_field(form.dbServer) }}
+            {{ wtf.form_field(form.dbName) }}
+            {{ wtf.form_field(form.dbAdmin) }}
+            {{ wtf.form_field(form.dbAdminPW) }}
+            <button class="btn btn-sm btn-primary" type="submit">Submit</button>
+        </form>
+    </div> <!-- /container -->
+
+    <div class="container-fluid">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-info" role="alert">
+                    {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+{% endblock %}
