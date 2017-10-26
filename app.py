@@ -24,11 +24,19 @@ class DbCreateForm(FlaskForm):
 
 @app.route('/')
 def index():
+    '''
+    Nothing to see here- go straight to dbcreate
+    :return: None
+    '''
     return redirect(url_for('dbcreate'))
 
 
 @app.route('/dbcreate', methods=['GET', 'POST'])
 def dbcreate():
+    '''
+    Create postgres database on requested instance using supplied credentials
+    :return: None
+    '''
     form = DbCreateForm()
     form.dbServer.choices = [(0, 'piportal-prime'), (1, 'piportal-prod'), (2, 'rds-pg-rails-dev'),
                              (3, 'rds-postgres-rails-test'), (4, 'rds-postgres-rails-prod'),
@@ -71,7 +79,9 @@ def dbcreate():
                 cur.execute(s[i])
             except psycopg2.ProgrammingError:
                 flash('FAIL: {}'.format(s[i]))
-
+        '''
+        The program needs to connect to the new database for the next set of grants
+        '''
         cur.close()
         conn.close()
 

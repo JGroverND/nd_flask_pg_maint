@@ -30,5 +30,12 @@ DB Create
             </div>
             {% endif %}
         {% endwith %}
+
+            <div class="alert alert-success" role="alert">
+                {% for i in s %}
+                {{ i }}</br>
+                {% endfor %}
+            </div>
+
     </div>
 {% endblock %}
