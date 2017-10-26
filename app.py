@@ -8,7 +8,7 @@ from wtforms import StringField, PasswordField, SelectField
 from wtforms.validators import InputRequired, NumberRange
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'this is really really secret'
+app.config['SECRET_KEY'] = 'change this really really secret string'
 Bootstrap(app)
 
 
@@ -38,62 +38,71 @@ def dbcreate():
         rds_domain = 'cms6g4vqt77v.us-east-1.rds.amazonaws.com'
         rds_fqdn = form.dbServer.choices[form.dbServer.data][1] + '.' + rds_domain
         rds_db = form.dbName.data
-        rds_user = form.dbAdmin.data
+        rds_admin= form.dbAdmin.data
         rds_password = form.dbAdminPW.data
-        rds_owner = form.dbName.data + '_owner'
 
         try:
-            conn = psycopg2.connect(dbname='postgres', host=rds_fqdn, user=rds_user, password=rds_password)
-        except:
-            flash('Bad Admin Creds postgres on ' + rds_fqdn + ' with ' + rds_user + '/' + rds_password)
+            conn = psycopg2.connect(dbname='postgres', host=rds_fqdn, user=rds_admin, password=rds_password)
+        except psycopg2.OperationalError:
+            flash('FAIL: bad login information for postgres database {}'.format(rds_fqdn))
             return render_template('dbcreate.html', form=form)
 
+        new_owner = form.dbName.data + '_owner'
+        new_user = form.dbName.data + '_user'
         po = pw_gen(16)
         pu = pw_gen(16)
 
         # create accounts
+        conn.autocommit = True
         cur = conn.cursor()
 
         s = []
-        s.append('CREATE ROLE ' + form.dbName.data + '_owner  WITH LOGIN   NOSUPERUSER NOCREATEROLE CREATEDB INHERIT NOREPLICATION CONNECTION LIMIT -1 PASSWORD \'' + po + '\';')
-        s.append('CREATE ROLE ' + form.dbName.data + '_user   WITH LOGIN   NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1 PASSWORD \'' + pu + '\';')
-        s.append('CREATE ROLE ' + form.dbName.data + '_reader WITH NOLOGIN NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1;')
-        s.append('CREATE ROLE ' + form.dbName.data + '_writer WITH NOLOGIN NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1;')
-        s.append('GRANT ' + form.dbName.data + '_owner  to ' + form.dbAdmin.data + ';')
-        s.append('GRANT ' + form.dbName.data + '_reader to  ' + form.dbName.data + '_user;')
-        s.append('GRANT ' + form.dbName.data + '_writer to  ' + form.dbName.data + '_user;')
+        s.append('CREATE ROLE {} WITH LOGIN   NOSUPERUSER NOCREATEROLE CREATEDB INHERIT NOREPLICATION CONNECTION LIMIT -1 PASSWORD \'{}\';'.format(new_owner, po))
+        s.append('CREATE ROLE {} WITH LOGIN   NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1 PASSWORD \'{}\';'.format(new_user, pu))
+        s.append('CREATE ROLE {}_reader WITH NOLOGIN NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1;'.format(rds_db))
+        s.append('CREATE ROLE {}_writer WITH NOLOGIN NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1;'.format(rds_db))
+        s.append('GRANT {} to {};'.format(new_owner, rds_admin))
+        s.append('GRANT {}_reader to {};'.format(rds_db, new_user))
+        s.append('GRANT {}_writer to {};'.format(rds_db, new_user))
+        s.append ('CREATE DATABASE {} WITH OWNER = {} ENCODING = \'UTF8\' CONNECTION LIMIT = -1;'.format(rds_db, new_owner))
 
         for i in range(0, len(s)):
-            flash(s[i])
-            cur.execute(s[i])
+            try:
+                cur.execute(s[i])
+            except psycopg2.ProgrammingError:
+                flash('FAIL: {}'.format(s[i]))
 
-        conn.commit()
-        cur.close()
-
-        # create database
-        cur = conn.cursor()
-        s = 'CREATE DATABASE ' + form.dbName.data + ' WITH OWNER = ' + form.dbName.data + '_owner ENCODING = \'UTF8\' CONNECTION LIMIT = -1;'
-        flash(s)
-        cur.execute(s)
-        conn.commit()
         cur.close()
         conn.close()
 
-        # grants to user account
-        conn = psycopg2.connect(dbname=rds_db, host=rds_fqdn, user=rds_owner, password=po)
+        try:
+            conn = psycopg2.connect(dbname=rds_db, host=rds_fqdn, user=rds_admin, password=rds_password)
+        except:
+            flash('FAIL: bad login information for {} on {}'.format(rds_db, rds_fqdn))
+            return render_template('dbcreate.html', form=form)
+
+        conn.autocommit = True
         cur = conn.cursor()
 
         s = []
-        s.append('grant select on all tables in schema public to ' + form.dbName.data + '_reader;')
-        s.append('grant select, insert, update, delete on all tables in schema public to ' + form.dbName.data + '_writer;')
+        s.append('grant select on all tables in schema public to {}_reader;'.format(rds_db))
+        s.append('grant select, insert, update, delete on all tables in schema public to {}_writer;'.format(rds_db))
 
         for i in range(0, len(s)):
-            flash(s[i])
-            cur.execute(s[i])
+            try:
+                cur.execute(s[i])
+            except psycopg2.ProgrammingError:
+                flash('FAIL: {}'.format(s[i]))
 
-        conn.commit()
         cur.close()
         conn.close()
+
+        flash('server: {}'.format(rds_fqdn))
+        flash('database: {}'.format(rds_db))
+        flash('owner: {}'.format(new_owner))
+        flash('owner password: {}'.format(po))
+        flash('user: {}'.format(new_user))
+        flash('user password: {}'.format(pu))
 
     return render_template('dbcreate.html', form=form)
 
