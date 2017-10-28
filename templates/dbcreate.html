@@ -23,6 +23,7 @@ DB Create
 
     <div class="container">
         {% with messages = get_flashed_messages() %}
+<<<<<<< HEAD
           {% if messages %}
             {% if errors %}
               <div class="alert alert-danger" role="alert">
@@ -36,5 +37,22 @@ DB Create
               </div>
           {% endif %}
         {% endwith %}
+=======
+            {% if messages %}
+            <div class="alert alert-danger" role="alert">
+                {% for message in messages %}
+                {{ message }}</br>
+                {% endfor %}
+            </div>
+            {% endif %}
+        {% endwith %}
+        {% if secret %}
+            <div class="alert alert-success" role="alert">
+                {% for i in secret %}
+                {{ i }}</br>
+                {% endfor %}
+            </div>
+        {% endif %}
+>>>>>>> 1b9bd542c7b8de6928141ad4c85e80aa430c28b4
     </div>
 {% endblock %}
