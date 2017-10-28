@@ -14,6 +14,7 @@ DB Create
             {{ wtf.form_field(form.dbName) }}
             {{ wtf.form_field(form.dbAdmin) }}
             {{ wtf.form_field(form.dbAdminPW) }}
+            {{ wtf.form_field(form.dbRunSQL) }}
             <button class="btn btn-sm btn-primary" type="submit">Submit</button>
         </form>
     </div> <!-- /container -->
@@ -22,20 +23,18 @@ DB Create
 
     <div class="container">
         {% with messages = get_flashed_messages() %}
-            {% if messages %}
-            <div class="alert alert-info" role="alert">
-                {% for message in messages %}
-                {{ message }}</br>
-                {% endfor %}
-            </div>
+          {% if messages %}
+            {% if errors %}
+              <div class="alert alert-danger" role="alert">
+            {% else %}
+              <div class="alert alert-success" role="alert">
             {% endif %}
+
+            {% for message in messages %}
+            {{ message }}</br>
+            {% endfor %}
+              </div>
+          {% endif %}
         {% endwith %}
-
-            <div class="alert alert-success" role="alert">
-                {% for i in s %}
-                {{ i }}</br>
-                {% endfor %}
-            </div>
-
     </div>
 {% endblock %}
