@@ -16,10 +16,14 @@ class DbCreateForm(FlaskForm):
     """
     Database creation form definition
     """
-    dbServer = SelectField("Database Server", coerce=int, validators=[NumberRange(min=0, max=5, message="Server name is foobar")])
-    dbName = StringField("Database Name", validators=[InputRequired()])
-    dbAdmin = StringField("Admin account", default="postgres", validators=[InputRequired()])
-    dbAdminPW = StringField("Admin Password", validators=[InputRequired()])
+    dbServer = SelectField("Database Server", coerce=int,
+                           validators=[NumberRange(min=0, max=5, message="Server name is foobar")])
+    dbName = StringField("Database Name",
+                         validators=[InputRequired()])
+    dbAdmin = StringField("Admin account", default="postgres",
+                          validators=[InputRequired()])
+    dbAdminPW = StringField("Admin Password",
+                            validators=[InputRequired()])
     dbRunSQL = BooleanField("Run generated SQL code", default=False)
 
 
@@ -159,9 +163,11 @@ def dbcreate():
             flash("\connect {}".format(rds_db))
 
         s = list()
-        s.append({"do": "GRANT SELECT ON ALL TABLES IN SCHEMA PUBLIC TO {}_reader;".format(rds_db),
+        s.append({"do":
+                  "GRANT SELECT ON ALL TABLES IN SCHEMA PUBLIC TO {}_reader;".format(rds_db),
                   "undo": None})
-        s.append({"do": "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA PUBLIC TO {}_writer;".format(rds_db),
+        s.append({"do":
+                  "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA PUBLIC TO {}_writer;".format(rds_db),
                   "undo": None})
 
         for i in range(0, len(s)):
