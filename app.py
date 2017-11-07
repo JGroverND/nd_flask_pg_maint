@@ -22,6 +22,7 @@ class DbCreateForm(FlaskForm):
     dbAdminPW = PasswordField('Admin Password', validators=[InputRequired()])
     dbRunSQL = BooleanField('Run SQL')
 
+
 @app.route('/')
 def index():
     """
@@ -39,11 +40,13 @@ def dbcreate():
     """
     form = DbCreateForm()
     sql = list()
-    secret = list()
-    errors = False
+    doc = list()
 
-    form.dbServer.choices = [(0, 'piportal-prime'), (1, 'piportal-prod'), (2, 'rds-pg-rails-dev'),
-                             (3, 'rds-postgres-rails-test'), (4, 'rds-postgres-rails-prod'),
+    form.dbServer.choices = [(0, 'piportal-prime'),
+                             (1, 'piportal-prod'),
+                             (2, 'rds-pg-rails-dev'),
+                             (3, 'rds-postgres-rails-test'),
+                             (4, 'rds-postgres-rails-prod'),
                              (5, 'rds-postgres-launchpad')]
 
     if form.validate_on_submit():
@@ -54,8 +57,46 @@ def dbcreate():
         rds_password = form.dbAdminPW.data
         new_owner = form.dbName.data + '_owner'
         new_user = form.dbName.data + '_user'
-        po = pw_gen(16)
-        pu = pw_gen(16)
+        new_owner_pw = pw_gen(16)
+        new_user_pw = pw_gen(16)
+
+        """
+        List of tuples (stage, command, backout command)
+        """
+        sql.append(('verify', 'SELECT 1 FROM pg_database WHERE datname=\'{}\''.format(rds_db), None))
+        sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}\''.format(new_owner), None))
+        sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}\''.format(new_user), None))
+        sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}_reader\''.format(rds_db), None))
+        sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}_writer\''.format(rds_db), None))
+
+        sql.append(('create', 'CREATE USER {} WITH LOGIN CREATEDB PASSWORD \'{}\';'.format(new_owner, new_owner_pw),
+                    'drop user {};'.format(new_owner)))
+        sql.append(('create', 'CREATE USER {} WITH LOGIN PASSWORD \'{}\';'.format(new_user, new_user_pw),
+                    'drop user {};'.format(new_user)))
+        sql.append(('create', 'CREATE ROLE {}_reader;'.format(rds_db),
+                    'drop role {}_reader;'.format(rds_db)))
+        sql.append(('create', 'CREATE ROLE {}_writer;'.format(rds_db),
+                    'drop role {}_writer;'.format(rds_db_)))
+        sql.append(('create', 'GRANT {} to {};'.format(new_owner, rds_admin),
+                    'revoke {} from {};'.format(new_owner, rds_admin)))
+        sql.append(('create', 'CREATE DATABASE {} WITH OWNER = {};'.format(rds_db, new_owner),
+                    'drop database {};'.format(rds_db)))
+
+        sql.append(('grant', 'GRANT {}_reader to {};'.format(rds_db, new_user),
+                    'revoke {}_reader from {};'.format(rds_db, new_user)))
+        sql.append(('grant', 'GRANT {}_writer to {};'.format(rds_db, new_user),
+                    'revoke {}_writer from {};'.format(rds_db, new_user)))
+        sql.append(('grant', 'grant select on all tables in schema public to {}_reader;'.format(rds_db),
+                    'revoke select on all tables in schema public from {}_reader;'.format(rds_db)))
+        sql.append(('grant', 'grant select, insert, update, delete on all tables in schema public to {}_writer;'.format(rds_db),
+                    'revoke select, insert, update, delete on all tables in schema public from {}_writer;'.format(rds_db)))
+
+        sql.append(('doc', 'server: {}'.format(rds_fqdn), None))
+        sql.append(('doc', 'database: {}'.format(rds_db), None))
+        sql.append(('doc', 'owner: {}'.format(new_owner), None))
+        sql.append(('doc', 'owner password: {}'.format(po), None))
+        sql.append(('doc', 'user: {}'.format(new_user), None))
+        sql.append(('doc', 'user password: {}'.format(pu), None))
 
         try:
             conn = psycopg2.connect(dbname='postgres', host=rds_fqdn, user=rds_admin, password=rds_password)
@@ -65,84 +106,94 @@ def dbcreate():
             flash(err)
             return render_template('dbcreate.html', form=form)
 
-        sql.append('SELECT 1 FROM pg_database WHERE datname=\'{}\''.format(rds_db))
-        sql.append('SELECT 1 FROM pg_roles WHERE rolname=\'{}\''.format(new_owner))
-        sql.append('SELECT 1 FROM pg_roles WHERE rolname=\'{}\''.format(new_user))
-        sql.append('SELECT 1 FROM pg_roles WHERE rolname=\'{}_reader\''.format(rds_db))
-        sql.append('SELECT 1 FROM pg_roles WHERE rolname=\'{}_writer\''.format(rds_db))
-
+        errors = False
         for i in range(0, len(sql)):
-            try:
-                cur.execute(sql[i])
-                if cur.fetchone():
-                    errors = True
-                    flash('requested object {} already exists'.format(sql[i].split('=')[1]))
-            except psycopg2.Error as err:
-                flash(err)
+            if sql[i][0] == 'verify':
+                try:
+                    cur.execute(sql[i])
+                    if cur.fetchone():
+                        errors = True
+                        flash('requested object {} already exists'.format(sql[i].split('=')[1]))
+                except psycopg2.Error as err:
+                    flash(err)
 
         if errors:
+            cur.close()
+            conn.close()
             return render_template('dbcreate.html', form=form)
 
-        sql.clear()
-        sql.append('CREATE ROLE {} WITH LOGIN   NOSUPERUSER NOCREATEROLE CREATEDB INHERIT NOREPLICATION CONNECTION LIMIT -1 PASSWORD \'{}\';'.format(new_owner, po))
-        sql.append('CREATE ROLE {} WITH LOGIN   NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1 PASSWORD \'{}\';'.format(new_user, pu))
-        sql.append('CREATE ROLE {}_reader WITH NOLOGIN NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1;'.format(rds_db))
-        sql.append('CREATE ROLE {}_writer WITH NOLOGIN NOSUPERUSER NOCREATEROLE INHERIT NOREPLICATION CONNECTION LIMIT -1;'.format(rds_db))
-        sql.append('GRANT {} to {};'.format(new_owner, rds_admin))
-        sql.append('GRANT {}_reader to {};'.format(rds_db, new_user))
-        sql.append('GRANT {}_writer to {};'.format(rds_db, new_user))
-        sql.append ('CREATE DATABASE {} WITH OWNER = {} ENCODING = \'UTF8\' CONNECTION LIMIT = -1;'.format(rds_db, new_owner))
 
+        errors = False
         for i in range(0, len(sql)):
-            if form.dbRunSQL.data:
+            if sql[i][0] == 'create':
                 try:
                     cur.execute(sql[i])
                 except psycopg2.Error as err:
+                    errors = True
                     flash(err)
-            else:
-                secret.append(sql[i])
 
+        if errors:
         """
-        The program needs to connect to the new database for the next set of grants
+        Input is verified, now apply the sql if requested
         """
-        cur.close()
-        conn.close()
-
-        if form.dbRunSQL.data:
-            try:
-                conn = psycopg2.connect(dbname=rds_db, host=rds_fqdn, user=rds_admin, password=rds_password)
-                conn.autocommit = True
-                cur = conn.cursor()
-            except psycopg2.Error as err:
-                flash(err)
-                return render_template('dbcreate.html', form=form)
-        else:
-            secret.append('\connect {}'.format(rds_db))
-
         sql.clear()
-        sql.append('grant select on all tables in schema public to {}_reader;'.format(rds_db))
-        sql.append('grant select, insert, update, delete on all tables in schema public to {}_writer;'.format(rds_db))
 
-        for i in range(0, len(sql)):
+
+
+
+        sql.append('\connect {}'.format(rds_db))
+
+
+
             if form.dbRunSQL.data:
-                try:
-                    cur.execute(sql[i])
-                except psycopg2.Error as err:
-                    flash(err)
-            else:
-                secret.append(sql[i])
+                """
+                Switching to the newly created database requires a new connection
+                """
+                if sql[i].[0:7] == '\connect':
+                    cur.close()
+                    conn.close()
+                    try:
+                        conn = psycopg2.connect(dbname=rds_db, host=rds_fqdn, user=rds_admin, password=rds_password)
+                        conn.autocommit = True
+                        cur = conn.cursor()
+                    except psycopg2.Error as err:
+                        flash('Could not switch to {} to complete grants'.format(rds_db))
+                        flash(err)
+                        return render_template('dbcreate.html', form=form)
+                else:
+                    try:
+                        cur.execute(sql[i])
+                    except psycopg2.Error as err:
+                        flash(err)
 
         cur.close()
         conn.close()
-
-        secret.append('-- server: {}'.format(rds_fqdn))
-        secret.append('-- database: {}'.format(rds_db))
-        secret.append('-- owner: {}'.format(new_owner))
-        secret.append('-- owner password: {}'.format(po))
-        secret.append('-- user: {}'.format(new_user))
-        secret.append('-- user password: {}'.format(pu))
 
     return render_template('dbcreate.html', form=form, secret=secret)
+
+
+def dbcreate_create():
+    created = True
+
+    sql = list()
+
+
+    for i in range(0, len(sql)):
+        try:
+            cur.execute(sql[i])
+        except psycopg2.Error as err:
+            created = False
+            flash(err)
+
+    return created
+
+
+def dbcreate_grant():
+    pass
+
+
+def db_create_backout():
+    pass
 
 
 def pw_gen(l):
