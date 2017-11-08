@@ -1,6 +1,7 @@
 from flask import Flask, render_template, redirect, url_for, flash
 from flask_bootstrap import Bootstrap
 from flask_wtf import FlaskForm
+import PostgresDb from postgresdb
 import psycopg2
 import random
 import string
@@ -16,7 +17,8 @@ class DbCreateForm(FlaskForm):
     """
     Database creation form definition
     """
-    dbServer = SelectField('Database Server', coerce=int, validators=[NumberRange(min=0, max=5, message='Server name is foobar')])
+    dbServer = SelectField('Database Server', coerce=int, validators=[NumberRange(min=0, max=5,
+                                                                                  message='Server name is foobar')])
     dbName = StringField('Database Name',  validators=[InputRequired()])
     dbAdmin = StringField('Admin account', default='postgres', validators=[InputRequired()])
     dbAdminPW = PasswordField('Admin Password', validators=[InputRequired()])
@@ -46,146 +48,74 @@ def dbcreate():
                              (4, 'rds-postgres-rails-prod'),
                              (5, 'rds-postgres-launchpad')]
 
-    rds_domain = 'cms6g4vqt77v.us-east-1.rds.amazonaws.com'
-    rds_fqdn = form.dbServer.choices[form.dbServer.data][1] + '.' + rds_domain
-    rds_db = form.dbName.data
-    rds_admin = form.dbAdmin.data
-    rds_password = form.dbAdminPW.data
-    new_owner = form.dbName.data + '_owner'
-    new_user = form.dbName.data + '_user'
-    new_owner_pw = pw_gen(16)
-    new_user_pw = pw_gen(16)
-
-    """
-    List of tuples (stage, sql command, back out sql command)
-    """
-    sql = list()
-    sql.append(('verify', 'SELECT 1 FROM pg_database WHERE datname=\'{}\';'.format(rds_db), None))
-    sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}\';'.format(new_owner), None))
-    sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}\';'.format(new_user), None))
-    sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}_reader\';'.format(rds_db), None))
-    sql.append(('verify', 'SELECT 1 FROM pg_roles WHERE rolname=\'{}_writer\';'.format(rds_db), None))
-
-    sql.append(('create', 'CREATE USER {} WITH LOGIN CREATEDB PASSWORD \'{}\';'.format(new_owner, new_owner_pw),
-                'drop user {};'.format(new_owner)))
-    sql.append(('create', 'CREATE USER {} WITH LOGIN PASSWORD \'{}\';'.format(new_user, new_user_pw),
-                'drop user {};'.format(new_user)))
-    sql.append(('create', 'CREATE ROLE {}_reader;'.format(rds_db),
-                'drop role {}_reader;'.format(rds_db)))
-    sql.append(('create', 'CREATE ROLE {}_writer;'.format(rds_db),
-                'drop role {}_writer;'.format(rds_db)))
-    sql.append(('create', 'GRANT {} to {};'.format(new_owner, rds_admin),
-                'revoke {} from {};'.format(new_owner, rds_admin)))
-    sql.append(('create', 'CREATE DATABASE {} WITH OWNER = {};'.format(rds_db, new_owner),
-                'drop database {};'.format(rds_db)))
-
-    sql.append(('grant', '\connect {}'.format(rds_db), None))
-    sql.append(('grant', 'GRANT {}_reader to {};'.format(rds_db, new_user),
-                'revoke {}_reader from {};'.format(rds_db, new_user)))
-    sql.append(('grant', 'GRANT {}_writer to {};'.format(rds_db, new_user),
-                'revoke {}_writer from {};'.format(rds_db, new_user)))
-    sql.append(('grant', 'grant select on all tables in schema public to {}_reader;'.format(rds_db),
-                'revoke select on all tables in schema public from {}_reader;'.format(rds_db)))
-    sql.append(
-        ('grant', 'grant select, insert, update, delete on all tables in schema public to {}_writer;'.format(rds_db),
-         'revoke select, insert, update, delete on all tables in schema public from {}_writer;'.format(rds_db)))
-
-    sql.append(('doc', '-- ----------> Send to requester', None))
-    sql.append(('doc', 'server: {}'.format(rds_fqdn), None))
-    sql.append(('doc', 'database: {}'.format(rds_db), None))
-    sql.append(('doc', 'owner: {}'.format(new_owner), None))
-    sql.append(('doc', 'owner password: {}'.format(new_owner_pw), None))
-    sql.append(('doc', 'user: {}'.format(new_user), None))
-    sql.append(('doc', 'user password: {}'.format(new_user_pw), None))
-
     if form.validate_on_submit():
-        if form.dbRunSQL.data:
-            try:
-                conn = psycopg2.connect(dbname='postgres', host=rds_fqdn, user=rds_admin, password=rds_password)
-                conn.autocommit = True
-                cur = conn.cursor()
+        rds = PostgresDb(form.dbRunSQL.data, form.dbServer.choices[form.dbServer.data][2], form.dbName, form.dbAdmin,
+                         form.dbAdminPW)
 
-            except psycopg2.Error as err:
-                """
-                Connection failed , bail.
-                """
-                flash(err)
+        if form.dbRunSQL.data:
+            if not rds.db_connect(rds.dbAdminDB):
                 return render_template('dbcreate.html', form=form)
 
-            if dbcreate_verify(sql, cur):
+            if dbcreate_verify(rds):
                 pass
             else:
                 """
                 Verification failed, bail.
                 """
-                cur.close()
-                conn.close()
-                dbcreate_backout(sql, None, 'show')
+                rds.db_disconnect()
                 return render_template('dbcreate.html', form=form)
 
-            if dbcreate_create(sql, cur):
-                pass
+            if dbcreate_create(rds):
+                rds.db_disconnect()
             else:
                 """
                 Creation failed, bail.
                 """
-                cur.close()
-                conn.close()
+                rds.db_disconnect()
                 return render_template('dbcreate.html', form=form)
 
-            cur.close()
-            conn.close()
-
-            try:
-                conn = psycopg2.connect(dbname=rds_db, host=rds_fqdn, user=rds_admin, password=rds_password)
-                conn.autocommit = True
-                cur = conn.cursor()
-
-            except psycopg2.Error as err:
-                flash('Could not switch to {} to complete grants'.format(rds_db))
-                flash(err)
+            cur = rds.db_connect(rds.dbName)
+            if not cur :
                 return render_template('dbcreate.html', form=form)
 
-            if dbcreate_grant(sql, cur):
+            if dbcreate_grant(rds):
                 pass
             else:
                 """
                 Grants failed, bail
                 """
-                cur.close()
-                conn.close()
+                rds.db_disconnect()
                 return render_template('dbcreate.html', form=form)
 
-            cur.close()
-            conn.close()
+            rds.db_disconnect()
 
-            flash("database {} created.".format(rds_db))
-            for i in range(0, len(sql)):
-                if sql[i][0] == 'doc':
-                    flash(sql[i][1])
+            flash("database {} created.".format(rds.dbName))
+            for i in range(0, len(rds.sql)):
+                if rds.sql[i][0] == 'doc':
+                    flash(rds.sql[i][1])
         else:
             """
             Display SQL, don't run it
             """
-            for i in range(0, len(sql)):
-                if sql[i][0] != 'verify':
-                    flash(sql[i][1])
+            for i in range(0, len(rds.sql)):
+                if rds.sql[i][0] != 'verify':
+                    flash(rds.sql[i][1])
 
-        dbcreate_backout(sql, None, 'show')
+        dbcreate_backout(rds, None, 'show')
 
     return render_template('dbcreate.html', form=form)
 
 
-def dbcreate_verify(sql, cur):
+def dbcreate_verify(rds):
     verified = True
 
-    for i in range(0, len(sql)):
-        if sql[i][0] == 'verify':
+    for i in range(0, len(rds.sql)):
+        if rds.sql[i][0] == 'verify':
             try:
-                cur.execute(sql[i][1])
-                if cur.fetchone():
+                rds.cur.execute(rds.sql[i][1])
+                if rds.cur.fetchone():
                     verified = False
-                    flash('requested object {} already exists'.format(sql[i][1].split('=')[1]))
+                    flash('requested object {} already exists'.format(rds.sql[i][1].split('=')[1]))
 
             except psycopg2.Error as err:
                 verified = False
@@ -194,79 +124,61 @@ def dbcreate_verify(sql, cur):
     return verified
 
 
-def dbcreate_create(sql, cur):
+def dbcreate_create(rds):
     created = True
 
-    for i in range(0, len(sql)):
-        if sql[i][0] == 'create':
+    for i in range(0, len(rds.sql)):
+        if rds.sql[i][0] == 'create':
             try:
-                cur.execute(sql[i][1])
+                rds.cur.execute(sql[i][1])
             except psycopg2.Error as err:
                 created = False
                 flash(err)
 
     if not created:
-        dbcreate_backout(sql, cur)
+        dbcreate_backout(rds)
             
     return created
 
 
-def dbcreate_grant(sql, cur):
+def dbcreate_grant(rds):
     granted = True
 
-    for i in range(0, len(sql)):
-        if sql[i][0] == 'grant' and sql[i][1][1:8] != 'connect':
+    for i in range(0, len(rds.sql)):
+        if rds.sql[i][0] == 'grant' and rds.sql[i][1][1:8] != 'connect':
             try:
-                cur.execute(sql[i][1])
+                rds.cur.execute(sql[i][1])
             except psycopg2.Error as err:
                 granted = False
                 flash(err)
 
     if not granted:
-        dbcreate_backout(sql, cur)
+        dbcreate_backout(rds)
             
     return granted
 
 
-def dbcreate_backout(sql, cur=None, mode='run'):
+def dbcreate_backout(rds):
     rev = list()
 
-    for i in range(0, len(sql)):
-        if sql[i][2]:
-            rev.append(sql[i][2])
+    for i in range(0, len(rds.sql)):
+        if rds.sql[i][2]:
+            rev.append(rds.sql[i][2])
 
     rev.reverse()
     if mode != 'run':
         flash('-- ----------> SQL to remove database')
 
     for i in range(0, len(rev)):
-        if mode == 'run' and cur:
+        if mode == 'run' and rds.cur:
             try:
-                cur.execute(rev[i])
+                rds.cur.execute(rev[i])
             except psycopg2.Error:
                 pass
         else:
             flash(rev[i])
 
     return rev
-
-
-def pw_gen(l):
-    """
-    Generate a password of l length
-    :param l: integer, length of password
-    :return: p a string of random characters of lenth l
-    """
-    c = string.ascii_letters + string.digits
-    p = ""
-    try:
-        pwl = int(l)
-    except ValueError:
-        pwl = 16
-    for x in range(pwl):
-        char = random.choice(c)
-        p = p + char
-    return p
 
 
 if __name__ == '__main__':
