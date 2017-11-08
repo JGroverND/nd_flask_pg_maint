@@ -1,3 +1,4 @@
+import psycopg2
 import random
 import string
 
@@ -13,8 +14,8 @@ class PostgresDb:
         self.dbName = dbname
         self.dbAdmin = dbadmin
         self.dbAdminPW = dbadminpw
-        self.owner = dbname + '_owner'
         self.user = dbname + '_user'
+        self.owner = dbname + '_owner'
         self.reader = dbname + '_reader'
         self.writer = dbname + '_writer'
         self.owner_pw = self.generate_password(16)

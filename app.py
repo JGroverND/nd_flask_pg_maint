@@ -2,7 +2,6 @@ from flask import Flask, render_template, redirect, url_for, flash
 from flask_bootstrap import Bootstrap
 from flask_wtf import FlaskForm
 from postgresdb import PostgresDb
-import psycopg2
 from wtforms import StringField, PasswordField, SelectField, BooleanField
 from wtforms.validators import InputRequired, NumberRange
 
@@ -25,11 +24,7 @@ class DbCreateForm(FlaskForm):
 
 @app.route('/')
 def index():
-    """
-    Nothing to see here- go straight to dbcreate
-    :return: None
-    """
-    return redirect(url_for('dbcreate'))
+    return render_template('dbcreate.html', form=form)
 
 
 @app.route('/dbcreate', methods=['GET', 'POST'])
@@ -47,11 +42,19 @@ def dbcreate():
                              (5, 'rds-postgres-launchpad')]
 
     if form.validate_on_submit():
-        rds = PostgresDb(form.dbRunSQL.data, form.dbServer.choices[form.dbServer.data][2], form.dbName, form.dbAdmin,
+        rds = PostgresDb(form.dbRunSQL.data, 
+                         form.dbServer.choices[form.dbServer.data][2], 
+                         form.dbName, 
+                         orm.dbAdmin,
                          form.dbAdminPW)
 
         if form.dbRunSQL.data:
-            if not rds.db_connect(rds.dbAdminDB):
+            if rds.db_connect(rds.dbAdminDB):
+                pass
+            else:
+                """
+                Connection failed, bail.
+                """
                 return render_template('dbcreate.html', form=form)
 
             if dbcreate_verify(rds):
@@ -64,28 +67,31 @@ def dbcreate():
                 return render_template('dbcreate.html', form=form)
 
             if dbcreate_create(rds):
-                rds.db_disconnect()
+                pass
             else:
                 """
                 Creation failed, bail.
                 """
                 rds.db_disconnect()
                 return render_template('dbcreate.html', form=form)
-
-            cur = rds.db_connect(rds.dbName)
-            if not cur :
+                
+            rds.db_disconnect()
+            if rds.db_connect(rds.dbName)
+                pass
+            else:
+                """
+                Connection failed, bail.
+                """
                 return render_template('dbcreate.html', form=form)
 
             if dbcreate_grant(rds):
-                pass
+                rds.db_disconnect()
             else:
                 """
                 Grants failed, bail
                 """
                 rds.db_disconnect()
                 return render_template('dbcreate.html', form=form)
-
-            rds.db_disconnect()
 
             flash("database {} created.".format(rds.dbName))
             for i in range(0, len(rds.sql)):
@@ -99,13 +105,14 @@ def dbcreate():
                 if rds.sql[i][0] != 'verify':
                     flash(rds.sql[i][1])
 
-        dbcreate_backout(rds, None, 'show')
+            dbcreate_backout(rds)
 
     return render_template('dbcreate.html', form=form)
 
 
 def dbcreate_verify(rds):
     verified = True
+
 
     for i in range(0, len(rds.sql)):
         if rds.sql[i][0] == 'verify':
@@ -164,19 +171,17 @@ def dbcreate_backout(rds):
             rev.append(rds.sql[i][2])
 
     rev.reverse()
-    if mode != 'run':
+    if not rds.dbRunSQL:
         flash('-- ----------> SQL to remove database')
 
     for i in range(0, len(rev)):
-        if mode == 'run' and rds.cur:
+        if rds.dbRunSQL and rds.cur:
             try:
                 rds.cur.execute(rev[i])
             except psycopg2.Error:
                 pass
         else:
             flash(rev[i])
-
-    return rev
 
 
 if __name__ == '__main__':
