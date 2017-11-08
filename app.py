@@ -1,10 +1,8 @@
 from flask import Flask, render_template, redirect, url_for, flash
 from flask_bootstrap import Bootstrap
 from flask_wtf import FlaskForm
-import PostgresDb from postgresdb
+from postgresdb import PostgresDb
 import psycopg2
-import random
-import string
 from wtforms import StringField, PasswordField, SelectField, BooleanField
 from wtforms.validators import InputRequired, NumberRange
 
