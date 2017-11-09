@@ -7,6 +7,9 @@ from wtforms import StringField, PasswordField, SelectField, BooleanField
 from wtforms.validators import InputRequired, NumberRange
 
 app = Flask(__name__)
+"""
+To do: use config file
+"""
 app.config['SECRET_KEY'] = 'change this really really secret string'
 Bootstrap(app)
 
@@ -25,14 +28,7 @@ class DbCreateForm(FlaskForm):
 
 @app.route('/')
 def index():
-    form = DbCreateForm()
-    form.dbServer.choices = [(0, 'piportal-prime'),
-                             (1, 'piportal-prod'),
-                             (2, 'rds-pg-rails-dev'),
-                             (3, 'rds-postgres-rails-test'),
-                             (4, 'rds-postgres-rails-prod'),
-                             (5, 'rds-postgres-launchpad')]
-    return render_template('dbcreate.html', form=form)
+    return redirect(url_for('dbcreate'))
 
 
 @app.route('/dbcreate', methods=['GET', 'POST'])
@@ -41,6 +37,9 @@ def dbcreate():
     Create postgres database on requested instance using supplied credentials
     """
     form = DbCreateForm()
+    """
+    To do: get postgres RDS list from AWS (boto)
+    """
     form.dbServer.choices = [(0, 'piportal-prime'),
                              (1, 'piportal-prod'),
                              (2, 'rds-pg-rails-dev'),
@@ -118,6 +117,11 @@ def dbcreate():
         dbcreate_backout(rds)
 
     return render_template('dbcreate.html', form=form, errors=False)
+
+
+"""
+To do: move DDL ops into PostgresDb class
+"""
 
 
 def dbcreate_verify(rds):
