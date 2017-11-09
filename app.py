@@ -2,6 +2,7 @@ from flask import Flask, render_template, redirect, url_for, flash
 from flask_bootstrap import Bootstrap
 from flask_wtf import FlaskForm
 from postgresdb import PostgresDb
+import psycopg2
 from wtforms import StringField, PasswordField, SelectField, BooleanField
 from wtforms.validators import InputRequired, NumberRange
 
@@ -14,8 +15,8 @@ class DbCreateForm(FlaskForm):
     """
     Database creation form definition
     """
-    dbServer = SelectField('Database Server', coerce=int, validators=[NumberRange(min=0, max=5,
-                                                                                  message='Server name is foobar')])
+    dbServer = SelectField('Database Server', coerce=int,
+                           validators=[NumberRange(min=0, max=5, message='Server name is foobar')])
     dbName = StringField('Database Name',  validators=[InputRequired()])
     dbAdmin = StringField('Admin account', default='postgres', validators=[InputRequired()])
     dbAdminPW = PasswordField('Admin Password', validators=[InputRequired()])
@@ -24,6 +25,13 @@ class DbCreateForm(FlaskForm):
 
 @app.route('/')
 def index():
+    form = DbCreateForm()
+    form.dbServer.choices = [(0, 'piportal-prime'),
+                             (1, 'piportal-prod'),
+                             (2, 'rds-pg-rails-dev'),
+                             (3, 'rds-postgres-rails-test'),
+                             (4, 'rds-postgres-rails-prod'),
+                             (5, 'rds-postgres-launchpad')]
     return render_template('dbcreate.html', form=form)
 
 
@@ -31,7 +39,6 @@ def index():
 def dbcreate():
     """
     Create postgres database on requested instance using supplied credentials
-    :return: None
     """
     form = DbCreateForm()
     form.dbServer.choices = [(0, 'piportal-prime'),
@@ -42,20 +49,21 @@ def dbcreate():
                              (5, 'rds-postgres-launchpad')]
 
     if form.validate_on_submit():
-        rds = PostgresDb(form.dbRunSQL.data, 
-                         form.dbServer.choices[form.dbServer.data][2], 
-                         form.dbName, 
-                         orm.dbAdmin,
-                         form.dbAdminPW)
+        rds = PostgresDb(form.dbRunSQL.data,
+                         form.dbServer.choices[form.dbServer.data][1],
+                         form.dbName.data,
+                         form.dbAdmin.data,
+                         form.dbAdminPW.data)
 
-        if form.dbRunSQL.data:
-            if rds.db_connect(rds.dbAdminDB):
+        if rds.runSQL:
+            if rds.db_connect():
                 pass
             else:
                 """
                 Connection failed, bail.
                 """
-                return render_template('dbcreate.html', form=form)
+                flash('Failed to connect to default database')
+                return render_template('dbcreate.html', form=form, errors=True)
 
             if dbcreate_verify(rds):
                 pass
@@ -64,7 +72,7 @@ def dbcreate():
                 Verification failed, bail.
                 """
                 rds.db_disconnect()
-                return render_template('dbcreate.html', form=form)
+                return render_template('dbcreate.html', form=form, errors=True)
 
             if dbcreate_create(rds):
                 pass
@@ -73,16 +81,17 @@ def dbcreate():
                 Creation failed, bail.
                 """
                 rds.db_disconnect()
-                return render_template('dbcreate.html', form=form)
+                return render_template('dbcreate.html', form=form, errors=True)
                 
             rds.db_disconnect()
-            if rds.db_connect(rds.dbName)
+            if rds.db_connect(rds.dbName):
                 pass
             else:
                 """
                 Connection failed, bail.
                 """
-                return render_template('dbcreate.html', form=form)
+                flash('Failed to connect to database {}'.format(rds.dbName))
+                return render_template('dbcreate.html', form=form, errors=True)
 
             if dbcreate_grant(rds):
                 rds.db_disconnect()
@@ -91,7 +100,7 @@ def dbcreate():
                 Grants failed, bail
                 """
                 rds.db_disconnect()
-                return render_template('dbcreate.html', form=form)
+                return render_template('dbcreate.html', form=form, errors=True)
 
             flash("database {} created.".format(rds.dbName))
             for i in range(0, len(rds.sql)):
@@ -105,14 +114,17 @@ def dbcreate():
                 if rds.sql[i][0] != 'verify':
                     flash(rds.sql[i][1])
 
-            dbcreate_backout(rds)
+        rds.runSQL = False
+        dbcreate_backout(rds)
 
-    return render_template('dbcreate.html', form=form)
+    return render_template('dbcreate.html', form=form, errors=False)
 
 
 def dbcreate_verify(rds):
+    """
+    Verify the requested objects don't already exist using generated SQL
+    """
     verified = True
-
 
     for i in range(0, len(rds.sql)):
         if rds.sql[i][0] == 'verify':
@@ -130,12 +142,15 @@ def dbcreate_verify(rds):
 
 
 def dbcreate_create(rds):
+    """
+    Create the requested objects from the generated SQL
+    """
     created = True
 
     for i in range(0, len(rds.sql)):
         if rds.sql[i][0] == 'create':
             try:
-                rds.cur.execute(sql[i][1])
+                rds.cur.execute(rds.sql[i][1])
             except psycopg2.Error as err:
                 created = False
                 flash(err)
@@ -147,12 +162,15 @@ def dbcreate_create(rds):
 
 
 def dbcreate_grant(rds):
+    """
+    Grant database permissions using generated SQL
+    """
     granted = True
 
     for i in range(0, len(rds.sql)):
         if rds.sql[i][0] == 'grant' and rds.sql[i][1][1:8] != 'connect':
             try:
-                rds.cur.execute(sql[i][1])
+                rds.cur.execute(rds.sql[i][1])
             except psycopg2.Error as err:
                 granted = False
                 flash(err)
@@ -164,6 +182,9 @@ def dbcreate_grant(rds):
 
 
 def dbcreate_backout(rds):
+    """
+    Use the generated back out SQL to undo previous actions or to display commands
+    """
     rev = list()
 
     for i in range(0, len(rds.sql)):
@@ -171,11 +192,11 @@ def dbcreate_backout(rds):
             rev.append(rds.sql[i][2])
 
     rev.reverse()
-    if not rds.dbRunSQL:
+    if not rds.runSQL:
         flash('-- ----------> SQL to remove database')
 
     for i in range(0, len(rev)):
-        if rds.dbRunSQL and rds.cur:
+        if rds.runSQL and rds.cur:
             try:
                 rds.cur.execute(rev[i])
             except psycopg2.Error:
