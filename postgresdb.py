@@ -112,6 +112,7 @@ class PostgresDb:
             """
             Connection failed , bail.
             """
+            print(err)
             return False
 
     def db_disconnect(self):
