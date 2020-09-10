@@ -1,6 +1,9 @@
 # README #
 
-This README would normally document whatever steps are necessary to get your application up and running.
+Get Started
+1. Create a python 3 virtual environment
+2. Clone the repo
+3. install the dependencies (pip install -r requirements.txt)
 
 ### What is this repository for? ###
 
